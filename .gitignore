@@ -1,0 +1,8 @@
+build/
+assets/tex/
+*.apk
+makecapk/
+temp.apk
+*.keystore
+output.map
+*.idsig

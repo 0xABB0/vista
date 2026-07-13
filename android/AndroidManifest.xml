@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.gabbo.vista" android:versionCode="1" android:versionName="1.0">
+	<uses-sdk android:minSdkVersion="29" android:targetSdkVersion="34" />
+	<uses-feature android:name="android.hardware.vulkan.version" android:version="0x401000" android:required="true" />
+	<application android:debuggable="true" android:hasCode="false" android:label="vista" android:icon="@mipmap/icon">
+		<activity android:configChanges="keyboardHidden|orientation|screenSize" android:label="vista" android:name="android.app.NativeActivity" android:exported="true" android:screenOrientation="landscape">
+			<meta-data android:name="android.app.lib_name" android:value="vista"/>
+			<intent-filter>
+				<action android:name="android.intent.action.MAIN"/>
+				<category android:name="android.intent.category.LAUNCHER"/>
+			</intent-filter>
+		</activity>
+	</application>
+</manifest>

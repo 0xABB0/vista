@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.gabbo.vistavr" android:versionCode="1" android:versionName="1.0">
+	<uses-sdk android:minSdkVersion="29" android:targetSdkVersion="32" />
+	<uses-feature android:name="android.hardware.vr.headtracking" android:version="1" android:required="true" />
+	<application android:debuggable="true" android:hasCode="false" android:label="vistavr" android:icon="@mipmap/icon">
+		<meta-data android:name="com.oculus.supportedDevices" android:value="quest|quest2|questpro|quest3"/>
+		<activity android:configChanges="keyboardHidden|orientation|screenSize|density" android:label="vistavr" android:name="android.app.NativeActivity" android:exported="true" android:launchMode="singleTask" android:screenOrientation="landscape" android:excludeFromRecents="false">
+			<meta-data android:name="android.app.lib_name" android:value="vistavr"/>
+			<meta-data android:name="com.oculus.vr.focusaware" android:value="true"/>
+			<intent-filter>
+				<action android:name="android.intent.action.MAIN"/>
+				<category android:name="com.oculus.intent.category.VR"/>
+				<category android:name="android.intent.category.LAUNCHER"/>
+			</intent-filter>
+		</activity>
+	</application>
+</manifest>
