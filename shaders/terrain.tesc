@@ -21,9 +21,7 @@ float edge_level(vec2 ea, vec2 eb)
     vec3 b = wpos(eb);
     float len = distance(a, b);
     float d = max(distance(0.5 * (a + b), u.campos.xyz), 4.0);
-    float lvl = U_TESSQ * 24.0 * len / d;
-    lvl = max(lvl, len * 0.5 * smoothstep(U_TESSQ * 160.0, U_TESSQ * 110.0, d));
-    return clamp(lvl, 1.0, 48.0);
+    return clamp(U_TESSQ * 24.0 * len / d, 1.0, 48.0);
 }
 
 void main()

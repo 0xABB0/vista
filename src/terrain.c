@@ -1,5 +1,4 @@
 #include "vista.h"
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -524,17 +523,6 @@ int terrain_init(VkCore *c, VkRenderPass rp, bool multiview, const Scene *scene)
         return -1;
     compute_chunk_bounds();
     build_height_blur();
-    const char *hmdump = getenv("VISTA_DUMP_HM");
-    if (hmdump)
-    {
-        FILE *df = fopen(hmdump, "wb");
-        if (df)
-        {
-            fwrite(g_hm, sizeof g_hm, 1, df);
-            fwrite(g_hm_blur, sizeof g_hm_blur, 1, df);
-            fclose(df);
-        }
-    }
     if (vkc_texture_r16(c, g_hm, TERRAIN_N, TERRAIN_N, &g_hmtex) != 0)
     {
         plat_log("terrain: heightmap upload failed");

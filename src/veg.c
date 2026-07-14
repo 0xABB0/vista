@@ -142,8 +142,11 @@ static void scatter_grass(v3 cp, Inst *g){
         if(sl > 0.58f) continue;
         if(sl > 0.38f && rndf() < (sl - 0.38f)/0.20f) continue;
         if(near_rock(x, z)) continue;
+        float fill = terrain_height_smooth_at(x, z) - h;
+        if(fill < 0.0f) fill = 0.0f;
+        if(fill > 0.9f) fill = 0.9f;
         g->p[0] = x; g->p[1] = h - 0.03f; g->p[2] = z;
-        g->p[3] = 0.5f + 0.7f*rndf();
+        g->p[3] = 0.5f + 0.7f*rndf() + fill;
         g->q[0] = rndf()*3.1415927f;
         g->q[1] = rndf()*6.2831853f;
         float macro = pg_clamp01(pg_terrain_macro(x, z)/0.875f);

@@ -11,7 +11,6 @@ layout(location = 1) in float vFade;
 layout(location = 2) in float vTint;
 layout(location = 3) in float vDist;
 layout(location = 4) in vec3 vWorld;
-layout(location = 5) in float vDev;
 
 layout(location = 0) out vec4 outc;
 
@@ -48,7 +47,9 @@ void main()
     float f = fract(sx) - 0.5;
     float sh = 0.45 + 0.55 * h11(id);
     float wdt = 0.42 * max(1.0 - vUV.y / sh, 0.0);
-    float a = 1.0;
+    float a = (vUV.y < sh && abs(f) < wdt) ? 1.0 : 0.0;
+    a *= vFade;
+    if (a <= 0.0) discard;
     vec3 dry = vec3(0.32, 0.27, 0.09);
     vec3 lush = vec3(0.05, 0.14, 0.03);
     vec3 hi = vec3(0.24, 0.42, 0.10);
@@ -65,5 +66,5 @@ void main()
     vec3 col = albedo * (sunCol * shadow * (0.25 + 0.55 * vUV.y) +
                          ambCol * (0.35 + 0.65 * ao) * (0.55 + 0.45 * shadow));
     col = aerial(col, vWorld, u.campos.xyz, u.sundir.xyz);
-    outc = vec4(clamp(vDev * 2.0, 0.0, 1.0), clamp(-vDev * 2.0, 0.0, 1.0), 0.2, 1.0);
+    outc = vec4(col, a);
 }

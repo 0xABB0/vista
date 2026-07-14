@@ -285,7 +285,5 @@ void main()
     }
 
     col = aerial(col, f_world, u.campos.xyz, u.sundir.xyz);
-    float dbg_ckx = mod(floor(f_world.x / 1.953125), 2.0);
-    float dbg_ckz = mod(floor(f_world.z / 1.953125), 2.0);
-    o_color = vec4(dbg_ckx, 0.0, dbg_ckz, 1.0);
+    o_color = vec4(col, 1.0);
 }
