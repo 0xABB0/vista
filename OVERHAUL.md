@@ -1,18 +1,5 @@
 # Vista graphics overhaul — plan, status, and session handoff
 
-## Continuation prompt (paste into a new session)
-
-> Continue the vista graphics overhaul. Enter the existing worktree at
-> `/Users/gabbo/repo/probe/vista/.claude/worktrees/vista-overhaul` (EnterWorktree with `path`),
-> then read `OVERHAUL.md` at its root and resume from "Current status". Use the Workflow tool to
-> orchestrate each remaining stage so the main context stays lean: one workflow per stage, with
-> agents for (a) implementation, (b) build + screenshot capture, (c) screenshot judging against
-> the stage's verification criteria; only stage summaries and final screenshots come back to the
-> main loop. Never declare a stage done from a compile — only from screenshots you or a judge
-> agent actually looked at. Keep all five build targets compiling at every stage. Do not commit
-> (CLAUDE.md forbids autonomous commits). Iterate each stage until its screenshots actually look
-> good before moving on.
-
 ## Goal
 
 Owner verdict on the current visuals: "worse than Oblivion". Target: a landscape you'd
@@ -47,16 +34,30 @@ screenshot at any hour — more beautiful than Crysis 3. Approved decisions:
   correct (sun disc, warm horizon, aerial perspective). Outputs cluster into two byte variants
   differing only in grass/tree A2C edge noise — benign; md5-compare against a known-good PNG
   therefore needs both references.
-- [ ] **S3 Bloom** — CoD:AW dual-filter: half-res base, 6 mips, 13-tap Karis down, 9-tap tent additive
-  up (use `vkc_pass_color(..., load_existing=true)` for the additive upsample), composite in
-  post_final. Tier 1 only. Verify: sun disc and water glints glow; no firefly flicker.
-- [ ] **S4 Shadows** — new `src/procgen.c` unifies CPU noise + the two divergent `forest_mask` copies
-  (terrain.c:154 vs veg.c:123). Replace the fixed-sun `bake_shadow` (terrain.c) with a sun-independent
-  horizon map (8 azimuths, 512², max horizon angle, packed 2×RGBA8) → soft ridge shadows for any sun;
-  keep AO bake. Add stable CSM: 3×2048 D16 desktop / 2×1024 tier 0, bounding-sphere cascades, texel
-  snap, normal-offset bias, PCF; casters terrain+trees+rocks. `sun_visibility()` include = CSM near +
-  horizon far with distance blend. DELETE blob shadows (veg.c pcShadow double-draws + tree/rock shadow
-  pipelines + shader mode branches). Verify: shadows track the moving sun at 3 times of day.
+- [x] **S3 Bloom** — DONE, verified on screenshots (sun disc halo, bloomed pond glints, no fireflies
+  across repeated runs, tier 0 clean). Dual-filter chain in render.c + shaders/bloom_down.frag /
+  bloom_up.frag (Karis on first down, 9-tap tent additive up via `load_existing`), composite in
+  post_final.frag, fully gated off on tier 0. Also: water.frag gained a two-lobe sun-glitter term
+  (Blinn pow 900 core + pow 64 path, fresnel/visibility scaled) because pre-S3 water specular never
+  got HDR-bright enough to bloom; that term is shared ALU on both tiers, so tier-0 lake highlights
+  are brighter than the S2 baseline (broad saturated patch, no glow) — revisit in S8 which reworks
+  water specular to GGX anyway. Note: repeated same-cam runs now come out byte-identical.
+- [x] **S4 Shadows** — DONE, verified on screenshots (same camera at t=25/150/280: long east shadows →
+  near-none → long west shadows; silhouette tree/rock shadows anchored at bases, no blobs left; ridge
+  shot shows the horizon-map massif shadow with light pools through crest gaps; repeat runs
+  byte-identical; tier 0 clean). Implementation: src/procgen.c unifies CPU noise + forest_mask (veg
+  3-octave clump variant won) and is in all platform source lists. Horizon map: CPU bake at init
+  (terrain.c bake_horizon, ~0.3 s, 512²×8 azimuths → 2×RGBA8); lightmap R now dead (255), G=AO,
+  B=canopy kept. CSM: D16 2D-array (tier 1 3×2048 radii 18/60/200, tier 0 2×1024 radii 20/90),
+  camera-centered bounding-sphere cascades + texel snap, depth-only caster passes (vkc_pass_depth /
+  vkc_pipe_depth, bias 4/1.75) recorded before the scene pass; casters = terrain STATIC path (pitfall
+  1) + trees + rocks, ShadowPC{mat4 vp; vec4 chunk} push constant. Set 0 grew to 9 bindings: b6/b7
+  horizon A/B, b8 cascade array via comparison sampler (portability subset now enables
+  mutableComparisonSamplers — was a validation error otherwise). FrameUBO += cascade_vp[3],
+  cascade_radii, cascade_texel. shaders/inc/shadow.glsl sun_visibility() = min(horizon smoothstep by
+  sun azimuth/elevation, CSM 9-tap PCF w/ normal-offset bias) used by terrain/grass/tree/rock/water.
+  Blob shadows deleted (veg.c pcShadow double-draws, tree/rock shadow pipelines, shader mode
+  branches); rock.vert noise moved to shaders/inc/noise3.glsl.
 - [ ] **S5 Terrain material** — hex-tiling (IQ single-lookup variant tier 0), triplanar above slope
   threshold (GPU-Gems-3 normal blend), height-based splat blending, load roughness maps (pack into
   color alpha in assets_io.c), GGX specular, snow sparkle + dithered snowline. The albedo GAIN hacks
@@ -135,6 +136,12 @@ screenshot at any hour — more beautiful than Crysis 3. Approved decisions:
 make macos && cd build && VISTA_SMOKE=1 ./vista            # writes build/smoke.png, exit 0 + "SMOKE OK"
 VISTA_CAM="1200,600,2.4,-0.05,30" VISTA_SHOT=x.png VISTA_SMOKE_FRAMES=5 ./vista   # framed shot
 ```
+Fixed-vantage harness: `tools/capture.sh <prefix> [names...]` builds macos, renders every row of
+`tools/vantages.tsv` (name, VISTA_CAM or `-`, frames, tier or `-`, repeat count) into
+`build/shots/<prefix>_<name>.png`, logs stdout to `build/shots/<prefix>.log`, extracts validation
+messages, exits nonzero on any failure. `SKIP_BUILD=1` skips the build. Add a row (proven exact
+coords only) whenever a stage discovers a new useful vantage; capture agents should run this
+harness for the standard set and hand-frame only genuinely new subjects.
 Read the PNG with the Read tool and LOOK at it. Standard vantages: default spawn (lakeside),
 `VISTA_CAM` ridge/valley shots, and 3 times of day via the time field (25=morning golden hour,
 150=noon, 280=evening). Terrain spans ±2000 on x/z (TSCALE 4000) and the camera clamps inside
@@ -176,8 +183,10 @@ conservative). Validation layer auto-enabled under VISTA_SMOKE; watch stdout for
 Run each stage as one Workflow invocation from the main session. Suggested shape per stage:
 1. `agent` (implementation): gets this file's stage spec + the relevant file list; edits code in this
    worktree; returns a diff summary only.
-2. `agent` (verify): runs the build, captures the standard screenshot set (several VISTA_CAM vantages
-   and times of day), returns paths + build/validation output tail.
+2. `agent` (capture, model=haiku effort=low): runs `tools/capture.sh <stage>` + the android builds
+   verbatim and returns paths + validation/build tail. Never a frontier-model agent; it executes
+   commands, it does not think. New vantages are added to tools/vantages.tsv by the implementation
+   agent so the harness stays the single capture path.
 3. `agent` (judge): Reads the PNGs, scores them against the stage's verification criteria, returns
    pass/fail + concrete visual defects.
 4. Loop 1–3 until the judge passes (bound the loop, e.g. 4 iterations, then surface to the owner).

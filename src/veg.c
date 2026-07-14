@@ -80,87 +80,11 @@ static float slope_at(float x, float z){
     return sqrtf(hx*hx + hz*hz)/(2.0f*e);
 }
 
-static uint32_t vhash2(int32_t x, int32_t z, uint32_t seed){
-    uint32_t h = seed + (uint32_t)x*0x27d4eb2fu + (uint32_t)z*0x9e3779b9u;
-    h ^= h >> 15; h *= 0x85ebca6bu;
-    h ^= h >> 13; h *= 0xc2b2ae35u;
-    h ^= h >> 16;
-    return h;
-}
-
-static float vlattice(int x, int z, uint32_t seed){
-    return (float)(vhash2(x, z, seed) & 0xFFFFFFu)*(1.0f/16777215.0f);
-}
-
-static float vnoise2f(float x, float z, uint32_t seed){
-    float fx = floorf(x), fz = floorf(z);
-    int xi = (int)fx, zi = (int)fz;
-    float tx = x - fx, tz = z - fz;
-    float sx = tx*tx*(3.0f - 2.0f*tx);
-    float sz = tz*tz*(3.0f - 2.0f*tz);
-    float a = vlattice(xi, zi, seed);
-    float b = vlattice(xi+1, zi, seed);
-    float c = vlattice(xi, zi+1, seed);
-    float d = vlattice(xi+1, zi+1, seed);
-    float m0 = a + (b-a)*sx;
-    float m1 = c + (d-c)*sx;
-    return m0 + (m1-m0)*sz;
-}
-
-static float forest_fbm(float x, float z, int oct, uint32_t seed){
-    float v = 0.0f, amp = 0.5f, sum = 0.0f;
-    for(int i = 0; i < oct; i++){
-        v += amp*vnoise2f(x, z, seed + (uint32_t)i*257u);
-        sum += amp;
-        float xr = x*2.02f + 3.1f;
-        float zr = z*2.02f + 7.7f;
-        x = xr; z = zr;
-        amp *= 0.5f;
-    }
-    return v/sum;
-}
-
-static float forest_mask(float wx, float wz){
-    float regional = forest_fbm(wx*0.0009f, wz*0.0009f, 2, 0xF0EE5Du);
-    float clumps = forest_fbm(wx*0.0035f + 41.0f, wz*0.0035f + 17.0f, 3, 0x1357Bu);
-    float density = regional*0.6f + clumps*0.4f;
-    return density;
-}
-
-static float clamp01(float v){
-    return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
-}
-
-static float terrain_hashn(float px, float pz){
-    float v = sinf(px*127.1f + pz*311.7f)*43758.5453f;
-    return v - floorf(v);
-}
-
-static float terrain_vnoise(float x, float z){
-    float ix = floorf(x), iz = floorf(z);
-    float fx = x - ix, fz = z - iz;
-    float sx = fx*fx*(3.0f - 2.0f*fx);
-    float sz = fz*fz*(3.0f - 2.0f*fz);
-    float a = terrain_hashn(ix, iz);
-    float b = terrain_hashn(ix + 1.0f, iz);
-    float c = terrain_hashn(ix, iz + 1.0f);
-    float d = terrain_hashn(ix + 1.0f, iz + 1.0f);
-    float m0 = a + (b - a)*sx;
-    float m1 = c + (d - c)*sx;
-    return m0 + (m1 - m0)*sz;
-}
-
-static float terrain_macro_at(float x, float z){
-    float px = x*0.0025f + 19.0f, pz = z*0.0025f + 19.0f;
-    float v = 0.0f, amp = 0.5f;
-    for(int i = 0; i < 3; i++){
-        v += amp*terrain_vnoise(px, pz);
-        float nx = px*2.03f + 11.3f;
-        float nz = pz*2.03f + 7.9f;
-        px = nx; pz = nz;
-        amp *= 0.5f;
-    }
-    return v;
+static float slope_smooth_at(float x, float z){
+    float e = 2.0f;
+    float hx = terrain_height_smooth_at(x+e, z) - terrain_height_smooth_at(x-e, z);
+    float hz = terrain_height_smooth_at(x, z+e) - terrain_height_smooth_at(x, z-e);
+    return sqrtf(hx*hx + hz*hz)/(2.0f*e);
 }
 
 static bool is_shoreline(float h){
@@ -214,14 +138,16 @@ static void scatter_grass(v3 cp, Inst *g){
         float z = cp.z + r*sinf(a);
         float h = terrain_height_at(x, z);
         if(h < WATER_LEVEL + 0.4f || h > TERRAIN_HEIGHT*0.55f) continue;
-        if(slope_at(x, z) > 0.5f) continue;
+        float sl = slope_smooth_at(x, z);
+        if(sl > 0.58f) continue;
+        if(sl > 0.38f && rndf() < (sl - 0.38f)/0.20f) continue;
         if(near_rock(x, z)) continue;
         g->p[0] = x; g->p[1] = h - 0.03f; g->p[2] = z;
         g->p[3] = 0.5f + 0.7f*rndf();
         g->q[0] = rndf()*3.1415927f;
         g->q[1] = rndf()*6.2831853f;
-        float macro = clamp01(terrain_macro_at(x, z)/0.875f);
-        float dryness = clamp01(1.0f - macro + (rndf() - 0.5f)*0.16f);
+        float macro = pg_clamp01(pg_terrain_macro(x, z)/0.875f);
+        float dryness = pg_clamp01(1.0f - macro + (rndf() - 0.5f)*0.16f);
         g->q[2] = dryness;
         g->q[3] = GRASS_R;
         return;
@@ -396,13 +322,13 @@ static void scatter_trees(void){
         if(hn < 0.09f || hn > 0.56f) continue;
         if(h < WATER_LEVEL + 1.5f) continue;
         if(slope_at(x, z) > 0.42f) continue;
-        float dens = clamp01(forest_mask(x, z));
+        float dens = pg_clamp01(pg_forest_density(x, z));
         if(dens < 0.40f) continue;
-        float edge = clamp01((dens - 0.40f)/0.12f);
+        float edge = pg_clamp01((dens - 0.40f)/0.12f);
         float keep = edge*edge*(3.0f - 2.0f*edge)*0.85f + 0.15f;
         if(rndf() > keep) continue;
         float hs = terrain_height_smooth_at(x, z);
-        float hbase = h - clamp01((h - hs) * 0.4f) * 1.5f;
+        float hbase = h - pg_clamp01((h - hs) * 0.4f) * 1.5f;
         Inst *g = &s_veg.trees[placed++];
         g->p[0] = x; g->p[1] = hbase - 0.25f; g->p[2] = z; g->p[3] = 0.7f + 0.8f*rndf();
         g->q[0] = rndf()*6.2831853f;
@@ -585,8 +511,8 @@ int veg_init(VkCore *c, VkRenderPass rp, bool multiview, const Scene *scene){
     if(veg_pipe(c, rp, multiview, scene->pipe_layout, "rock.vert", "rock.frag",
                 rvb, 2, rva, 4, VK_FALSE, VK_FALSE, &s_veg.rock_pipe))
         return -1;
-    if(veg_pipe(c, rp, multiview, scene->pipe_layout, "rock.vert", "rock.frag",
-                rvb, 2, rva, 4, VK_FALSE, VK_TRUE, &s_veg.rock_shadow_pipe))
+    if(vkc_pipe_depth(c, render_shadow_rp(), scene->pipe_layout, "shaders/shadow_rock.vert.spv",
+                      rvb, 2, rva, 4, &s_veg.rock_shadow_pipe))
         return -1;
     VkVertexInputBindingDescription tvb[2] = {
         { .binding = 0, .stride = 9*sizeof(float), .inputRate = VK_VERTEX_INPUT_RATE_VERTEX },
@@ -602,8 +528,8 @@ int veg_init(VkCore *c, VkRenderPass rp, bool multiview, const Scene *scene){
     if(veg_pipe(c, rp, multiview, scene->pipe_layout, "tree.vert", "tree.frag",
                 tvb, 2, tva, 5, VK_FALSE, VK_FALSE, &s_veg.tree_pipe))
         return -1;
-    if(veg_pipe(c, rp, multiview, scene->pipe_layout, "tree.vert", "tree.frag",
-                tvb, 2, tva, 5, VK_FALSE, VK_TRUE, &s_veg.tree_shadow_pipe))
+    if(vkc_pipe_depth(c, render_shadow_rp(), scene->pipe_layout, "shaders/shadow_tree.vert.spv",
+                      tvb, 2, tva, 5, &s_veg.tree_shadow_pipe))
         return -1;
     return 0;
 }
@@ -663,28 +589,12 @@ void veg_record(VkCommandBuffer cmd, uint32_t slot){
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s_veg.scene->pipe_layout,
                             0, 1, &s_veg.scene->set0[slot], 0, NULL);
     VkDeviceSize zero = 0;
-    float pcShadow[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
-    float pcNormal[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
     VkBuffer tbufs[2] = { s_veg.tree_vb.buf, s_veg.tree_instbuf.buf };
     VkDeviceSize toffs[2] = { 0, 0 };
     VkBuffer rbufs[2] = { s_veg.rock_vb.buf, s_veg.rock_buf[slot].buf };
     VkDeviceSize roffs[2] = { 0, 0 };
-    if(s_veg.tree_shadow_pipe != VK_NULL_HANDLE && s_veg.tree_count > 0){
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s_veg.tree_shadow_pipe);
-        vkCmdPushConstants(cmd, s_veg.scene->pipe_layout, VEG_PC_STAGES, 0, sizeof pcShadow, pcShadow);
-        vkCmdBindVertexBuffers(cmd, 0, 2, tbufs, toffs);
-        vkCmdBindIndexBuffer(cmd, s_veg.tree_ib.buf, 0, VK_INDEX_TYPE_UINT16);
-        vkCmdDrawIndexed(cmd, s_veg.tree_icount, s_veg.tree_count, 0, 0, 0);
-    }
-    if(s_veg.rock_shadow_pipe != VK_NULL_HANDLE){
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s_veg.rock_shadow_pipe);
-        vkCmdPushConstants(cmd, s_veg.scene->pipe_layout, VEG_PC_STAGES, 0, sizeof pcShadow, pcShadow);
-        vkCmdBindVertexBuffers(cmd, 0, 2, rbufs, roffs);
-        vkCmdDraw(cmd, ROCK_VERTS, ROCK_COUNT, 0, 0);
-    }
     if(s_veg.tree_pipe != VK_NULL_HANDLE && s_veg.tree_count > 0){
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s_veg.tree_pipe);
-        vkCmdPushConstants(cmd, s_veg.scene->pipe_layout, VEG_PC_STAGES, 0, sizeof pcNormal, pcNormal);
         vkCmdBindVertexBuffers(cmd, 0, 2, tbufs, toffs);
         vkCmdBindIndexBuffer(cmd, s_veg.tree_ib.buf, 0, VK_INDEX_TYPE_UINT16);
         vkCmdDrawIndexed(cmd, s_veg.tree_icount, s_veg.tree_count, 0, 0, 0);
@@ -693,9 +603,33 @@ void veg_record(VkCommandBuffer cmd, uint32_t slot){
     vkCmdBindVertexBuffers(cmd, 0, 1, &s_veg.grass_buf[slot].buf, &zero);
     vkCmdDraw(cmd, GRASS_VERTS, GRASS_COUNT, 0, 0);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s_veg.rock_pipe);
-    vkCmdPushConstants(cmd, s_veg.scene->pipe_layout, VEG_PC_STAGES, 0, sizeof pcNormal, pcNormal);
     vkCmdBindVertexBuffers(cmd, 0, 2, rbufs, roffs);
     vkCmdDraw(cmd, ROCK_VERTS, ROCK_COUNT, 0, 0);
+}
+
+void veg_record_shadow(VkCommandBuffer cmd, uint32_t slot, const FrameUBO *ubo, uint32_t cascade){
+    if(slot >= VISTA_FRAMES || !s_veg.scene)
+        return;
+    ShadowPC pc;
+    pc.vp = ubo->cascade_vp[cascade];
+    memset(pc.chunk, 0, sizeof pc.chunk);
+    VkBuffer tbufs[2] = { s_veg.tree_vb.buf, s_veg.tree_instbuf.buf };
+    VkDeviceSize toffs[2] = { 0, 0 };
+    VkBuffer rbufs[2] = { s_veg.rock_vb.buf, s_veg.rock_buf[slot].buf };
+    VkDeviceSize roffs[2] = { 0, 0 };
+    if(s_veg.tree_shadow_pipe != VK_NULL_HANDLE && s_veg.tree_count > 0){
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s_veg.tree_shadow_pipe);
+        vkCmdPushConstants(cmd, s_veg.scene->pipe_layout, VEG_PC_STAGES, 0, sizeof pc, &pc);
+        vkCmdBindVertexBuffers(cmd, 0, 2, tbufs, toffs);
+        vkCmdBindIndexBuffer(cmd, s_veg.tree_ib.buf, 0, VK_INDEX_TYPE_UINT16);
+        vkCmdDrawIndexed(cmd, s_veg.tree_icount, s_veg.tree_count, 0, 0, 0);
+    }
+    if(s_veg.rock_shadow_pipe != VK_NULL_HANDLE){
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s_veg.rock_shadow_pipe);
+        vkCmdPushConstants(cmd, s_veg.scene->pipe_layout, VEG_PC_STAGES, 0, sizeof pc, &pc);
+        vkCmdBindVertexBuffers(cmd, 0, 2, rbufs, roffs);
+        vkCmdDraw(cmd, ROCK_VERTS, ROCK_COUNT, 0, 0);
+    }
 }
 
 float veg_min_tree_dist(v3 p){

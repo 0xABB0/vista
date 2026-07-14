@@ -255,6 +255,7 @@ void game_fill_light(const GameState *g, FrameUBO *out)
     out->timeparams[1] = frac;
     out->timeparams[2] = quality;
     out->timeparams[3] = quality;
+    render_fill_cascades(g->pos, game_sun_dir(g), out);
     out->post[0] = 0.20f;
     out->post[1] = 0.012f;
     out->post[2] = 0.0f;

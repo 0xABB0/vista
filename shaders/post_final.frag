@@ -3,8 +3,10 @@
 
 #ifdef MULTIVIEW
 layout(set = 1, binding = 0) uniform sampler2DArray hdr_scene;
+layout(set = 1, binding = 1) uniform sampler2DArray bloom_tex;
 #else
 layout(set = 1, binding = 0) uniform sampler2D hdr_scene;
+layout(set = 1, binding = 1) uniform sampler2D bloom_tex;
 #endif
 
 layout(location = 0) in vec2 v_uv;
@@ -65,6 +67,14 @@ void main()
 #else
     vec3 hdr = texture(hdr_scene, v_uv).rgb;
 #endif
+    if (TIER >= 1u) {
+#ifdef MULTIVIEW
+        vec3 bloom = texture(bloom_tex, vec3(v_uv, float(VIEW))).rgb;
+#else
+        vec3 bloom = texture(bloom_tex, v_uv).rgb;
+#endif
+        hdr += max(bloom, vec3(0.0)) * 0.18;
+    }
     vec3 col = hdr * U_EXPOSURE;
     col = agx(col);
     col = grade(col);

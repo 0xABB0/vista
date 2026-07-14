@@ -38,6 +38,7 @@ m4 m4identity(void);
 m4 m4mul(m4 a, m4 b);
 m4 m4perspective(float fovy, float aspect, float znear, float zfar);
 m4 m4frustum_xr(float angleLeft, float angleRight, float angleUp, float angleDown, float znear, float zfar);
+m4 m4ortho(float l, float r, float b, float t, float n, float f);
 m4 m4look(v3 eye, v3 center, v3 up);
 m4 m4from_rt(q4 rot, v3 pos);
 m4 m4inverse_rt(m4 a);
@@ -59,7 +60,15 @@ typedef struct {
     float ambient_horizon[4];
     float timeparams[4];
     float post[4];
+    m4 cascade_vp[3];
+    float cascade_radii[4];
+    float cascade_texel[4];
 } FrameUBO;
+
+typedef struct {
+    m4 vp;
+    float chunk[4];
+} ShadowPC;
 
 typedef struct {
     VkBuffer buf;
@@ -93,6 +102,7 @@ typedef struct {
     VkDescriptorPool dpool;
     VkSampler sampler_repeat;
     VkSampler sampler_clamp;
+    VkSampler sampler_shadow;
     VkPipelineCache pcache;
 } VkCore;
 
@@ -138,6 +148,10 @@ int vkc_pass_scene_main(Pass *p, VkCore *c, VkFormat fmt, VkImageView msaa_color
                         VkImageView resolve, uint32_t w, uint32_t h, uint32_t view_mask);
 int vkc_pass_color(Pass *p, VkCore *c, VkFormat fmt, VkImageView target, uint32_t w, uint32_t h,
                    uint32_t view_mask, bool load_existing);
+int vkc_pass_depth(Pass *p, VkCore *c, VkFormat fmt, VkImageView target, uint32_t w, uint32_t h);
+int vkc_pipe_depth(VkCore *c, VkRenderPass rp, VkPipelineLayout layout, const char *vs_asset,
+                   const VkVertexInputBindingDescription *vb, uint32_t nvb,
+                   const VkVertexInputAttributeDescription *va, uint32_t nva, VkPipeline *out);
 void vkc_pass_begin(VkCommandBuffer cmd, const Pass *p, const VkClearValue *clears, uint32_t nclears);
 void vkc_pass_destroy(Pass *p);
 const VkSpecializationInfo *vkc_tier_spec(VkCore *c);
@@ -145,6 +159,9 @@ const VkSpecializationInfo *vkc_tier_spec(VkCore *c);
 int render_init(VkCore *c, uint32_t w, uint32_t h, uint32_t layers);
 VkRenderPass render_scene_rp(void);
 VkRenderPass render_terrain_rp(void);
+VkRenderPass render_shadow_rp(void);
+VkImageView render_shadowmap_view(void);
+void render_fill_cascades(v3 campos, v3 sundir, FrameUBO *ubo);
 int render_post_init(VkCore *c, VkRenderPass final_rp);
 int render_resize(uint32_t w, uint32_t h);
 void render_record(VkCommandBuffer cmd, uint32_t slot, VkFramebuffer final_fb, uint32_t fw, uint32_t fh);
@@ -215,10 +232,12 @@ void scene_update_ubo(uint32_t slot, const FrameUBO *ubo);
 void scene_record(VkCommandBuffer cmd, uint32_t slot, uint32_t w, uint32_t h);
 void scene_record_terrain(VkCommandBuffer cmd, uint32_t slot, uint32_t w, uint32_t h);
 void scene_record_rest(VkCommandBuffer cmd, uint32_t slot, uint32_t w, uint32_t h);
+void scene_record_shadow(VkCommandBuffer cmd, uint32_t slot, uint32_t cascade, uint32_t res);
 void scene_destroy(void);
 
 int terrain_init(VkCore *c, VkRenderPass rp, bool multiview, const Scene *scene);
 void terrain_record(VkCommandBuffer cmd, uint32_t slot, const FrameUBO *ubo);
+void terrain_record_shadow(VkCommandBuffer cmd, const FrameUBO *ubo, uint32_t cascade);
 void terrain_destroy(void);
 float terrain_height_at(float x, float z);
 float terrain_height_smooth_at(float x, float z);
@@ -232,6 +251,7 @@ void sky_destroy(void);
 int veg_init(VkCore *c, VkRenderPass rp, bool multiview, const Scene *scene);
 void veg_update(v3 campos, uint32_t slot);
 void veg_record(VkCommandBuffer cmd, uint32_t slot);
+void veg_record_shadow(VkCommandBuffer cmd, uint32_t slot, const FrameUBO *ubo, uint32_t cascade);
 void veg_destroy(void);
 float veg_min_tree_dist(v3 p);
 
@@ -242,6 +262,16 @@ void water_record(VkCommandBuffer cmd, uint32_t slot);
 void water_destroy(void);
 
 VImg *terrain_lightmap_tex(void);
+VImg *terrain_horizon_tex(uint32_t i);
+
+float pg_clamp01(float v);
+float pg_smoothstep(float a, float b, float x);
+float pg_vnoise2(float x, float z, uint32_t seed);
+float pg_fbm2(float x, float z, int oct, uint32_t seed);
+float pg_ridged2(float x, float z, int oct, uint32_t seed);
+float pg_forest_density(float wx, float wz);
+float pg_forest_mask(float wx, float wz);
+float pg_terrain_macro(float x, float z);
 
 typedef struct {
     v3 pos;
@@ -263,6 +293,7 @@ typedef struct {
     VImg grass_color, grass_normal;
     VImg rock_color, rock_normal;
     VImg dirt_color, dirt_normal;
+    VImg snow_color, snow_normal;
 } Textures;
 
 extern Textures g_tex;

@@ -2,17 +2,15 @@
 #include "inc/common.glsl"
 #define ATM_SCENE_SAMPLERS
 #include "inc/atmosphere.glsl"
+#include "inc/shadow.glsl"
 
 layout(set = 0, binding = 2) uniform sampler2D lightmap;
 layout(set = 1, binding = 2) uniform sampler2D rock_color;
-
-layout(push_constant) uniform PC { vec4 mode; } pc;
 
 layout(location = 0) in vec3 vNrm;
 layout(location = 1) in vec3 vWorld;
 layout(location = 2) in float vTint;
 layout(location = 3) in float vLocalY;
-layout(location = 4) in float vShadowAlpha;
 
 layout(location = 0) out vec4 outc;
 
@@ -40,11 +38,6 @@ float fbm(vec2 p)
 
 void main()
 {
-    if (pc.mode.x > 0.5)
-    {
-        outc = vec4(0.015, 0.02, 0.03, clamp(vShadowAlpha, 0.0, 1.0));
-        return;
-    }
     vec3 N = normalize(vNrm);
     vec3 L = normalize(u.sundir.xyz);
     float nd = max(dot(N, L), 0.0);
@@ -58,9 +51,8 @@ void main()
     float groundAO = smoothstep(-0.95, -0.1, vLocalY);
     base *= 0.45 + 0.55 * groundAO;
     vec2 lmuv = vWorld.xz / TSCALE + 0.5;
-    vec2 lm = texture(lightmap, lmuv).rg;
-    float shadow = lm.r;
-    float ao = lm.g * (0.55 + 0.45 * groundAO);
+    float shadow = sun_visibility(vWorld, N);
+    float ao = texture(lightmap, lmuv).g * (0.55 + 0.45 * groundAO);
     vec3 ambient = mix(u.ambient_horizon.rgb, u.ambient_zenith.rgb, N.y * 0.5 + 0.5) * ATM_PI;
     vec3 col = base * (u.sun_radiance.rgb * nd * shadow + ambient * ao);
     col = aerial(col, vWorld, u.campos.xyz, u.sundir.xyz);

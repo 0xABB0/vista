@@ -19,6 +19,9 @@ layout(set = 0, binding = 0) uniform FrameUBO {
     vec4 ambient_horizon;
     vec4 timeparams;
     vec4 post;
+    mat4 cascade_vp[3];
+    vec4 cascade_radii;
+    vec4 cascade_texel;
 } u;
 
 #define U_TIME (u.timeparams.x)

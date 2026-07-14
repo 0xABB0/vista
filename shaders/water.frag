@@ -2,9 +2,9 @@
 #include "inc/common.glsl"
 #define ATM_SCENE_SAMPLERS
 #include "inc/atmosphere.glsl"
+#include "inc/shadow.glsl"
 
 layout(set = 0, binding = 1) uniform sampler2D heightmap;
-layout(set = 0, binding = 2) uniform sampler2D lightmap;
 
 layout(location = 0) in vec3 f_world;
 layout(location = 0) out vec4 o_color;
@@ -56,16 +56,21 @@ void main()
     vec2 g1 = noise_grad(p1, 0.35);
     vec2 g2 = noise_grad(p2, 0.35);
     vec2 g3 = noise_grad(p3, 0.35);
-    vec2 slope = g1 * 0.5 + g2 * 0.3 + g3 * 0.15;
+    vec2 wave = g1 * 0.5 + g2 * 0.3 + g3 * 0.15;
 
     float dist = distance(f_world, u.campos.xyz);
     float rippleFade = clamp(1.0 - dist * 0.0016, 0.1, 1.0);
-    slope *= rippleFade;
+    vec2 slope = wave * rippleFade;
     float slopeLen = length(slope);
     float maxSlope = 0.16;
     if (slopeLen > maxSlope) slope *= maxSlope / slopeLen;
     vec3 N = normalize(vec3(-slope.x, 3.4, -slope.y));
     vec3 Ncalm = normalize(mix(vec3(0.0, 1.0, 0.0), N, 0.25));
+
+    vec2 gslope = wave * clamp(1.0 - dist * 0.0005, 0.25, 1.0);
+    float gslopeLen = length(gslope);
+    if (gslopeLen > maxSlope) gslope *= maxSlope / gslopeLen;
+    vec3 Ng = normalize(vec3(-gslope.x, 1.1, -gslope.y));
 
     vec2 uv = f_world.xz / TSCALE + 0.5;
 
@@ -114,7 +119,7 @@ void main()
     }
     sky = mix(sky, mtnCol, mtnHit);
 
-    float shadow = textureLod(lightmap, uv, 0.0).r;
+    float shadow = sun_visibility(f_world, vec3(0.0, 1.0, 0.0));
     sky *= 0.65 + 0.35 * shadow;
 
     vec3 deep = vec3(0.015, 0.07, 0.09) * mix(u.ambient_horizon.rgb, u.ambient_zenith.rgb, 0.5) * ATM_PI * 3.0 + sky * 0.20;
@@ -133,6 +138,15 @@ void main()
     vec3 foamCol = vec3(0.9) * (amb2 + u.sun_radiance.rgb * 0.5);
     col = mix(col, foamCol, foamBand * 0.9);
     alpha = max(alpha, foamBand * 0.85);
+
+    vec3 H = normalize(V + sd);
+    float gdot = clamp(dot(Ng, H), 0.0, 1.0);
+    float glint = pow(gdot, 900.0) * 2.0 + pow(gdot, 64.0) * 0.08;
+    float fresH = 0.02 + 0.98 * pow(1.0 - clamp(dot(H, V), 0.0, 1.0), 5.0);
+    vec3 glintCol = u.sun_radiance.rgb * 40.0 * glint * fresH * sunvis * (0.65 + 0.35 * shadow);
+    col += glintCol;
+    float glintLum = dot(glintCol, vec3(0.2126, 0.7152, 0.0722));
+    alpha = max(alpha, clamp(glintLum, 0.0, 0.95));
 
     col = aerial(col, f_world, u.campos.xyz, sd);
     o_color = vec4(col, alpha);

@@ -2,15 +2,11 @@
 #include "inc/common.glsl"
 #include "inc/noise3.glsl"
 
+layout(push_constant) uniform PC { mat4 vp; vec4 pad; } pc;
+
 layout(location = 0) in vec3 aPos;
-layout(location = 1) in vec3 aNrm;
 layout(location = 2) in vec4 i0;
 layout(location = 3) in vec4 i1;
-
-layout(location = 0) out vec3 vNrm;
-layout(location = 1) out vec3 vWorld;
-layout(location = 2) out float vTint;
-layout(location = 3) out float vLocalY;
 
 void main()
 {
@@ -21,11 +17,5 @@ void main()
     float cy = cos(i1.x);
     float sy = sin(i1.x);
     vec3 rp = vec3(cy * p.x + sy * p.z, p.y, -sy * p.x + cy * p.z);
-    vec3 rn = vec3(cy * aNrm.x + sy * aNrm.z, aNrm.y, -sy * aNrm.x + cy * aNrm.z);
-    vec3 world = i0.xyz + rp * sc;
-    vNrm = rn;
-    vWorld = world;
-    vTint = i1.z;
-    vLocalY = p.y;
-    gl_Position = u.viewproj[VIEW] * vec4(world, 1.0);
+    gl_Position = pc.vp * vec4(i0.xyz + rp * sc, 1.0);
 }

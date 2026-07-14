@@ -2,16 +2,13 @@
 #include "inc/common.glsl"
 #define ATM_SCENE_SAMPLERS
 #include "inc/atmosphere.glsl"
-
-layout(push_constant) uniform PC { vec4 mode; } pc;
+#include "inc/shadow.glsl"
 
 layout(location = 0) in vec3 vNrm;
 layout(location = 1) in vec3 vWorld;
 layout(location = 2) in vec3 vCol;
-layout(location = 3) in float vShadow;
-layout(location = 4) in float vAO;
-layout(location = 5) in float vLocalH;
-layout(location = 6) in float vShadowAlpha;
+layout(location = 3) in float vAO;
+layout(location = 4) in float vLocalH;
 
 layout(location = 0) out vec4 outc;
 
@@ -31,11 +28,6 @@ float vnoise(vec2 p)
 
 void main()
 {
-    if (pc.mode.x > 0.5)
-    {
-        outc = vec4(0.02, 0.03, 0.02, clamp(vShadowAlpha, 0.0, 1.0));
-        return;
-    }
     vec3 N = normalize(vNrm);
     vec3 V = normalize(u.campos.xyz - vWorld);
     vec3 L = normalize(u.sundir.xyz);
@@ -48,6 +40,7 @@ void main()
 
     float rim = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 3.0) * 0.18;
 
+    float shadow = sun_visibility(vWorld, N);
     vec3 sunCol = u.sun_radiance.rgb;
     vec3 skyAmb = u.ambient_zenith.rgb * ATM_PI;
     vec3 bounceAmb = u.ambient_horizon.rgb * ATM_PI * vec3(0.65, 0.62, 0.40);
@@ -57,7 +50,7 @@ void main()
 
     float crownGrad = 0.82 + 0.30 * vLocalH;
     vec3 tint = vCol * speck * crownGrad;
-    vec3 lit = tint * (sunCol * nd * vShadow * baseAO + ambient) + tint * rim * dot(skyAmb, vec3(0.33));
+    vec3 lit = tint * (sunCol * nd * shadow * baseAO + ambient) + tint * rim * dot(skyAmb, vec3(0.33));
     vec3 col = aerial(lit, vWorld, u.campos.xyz, u.sundir.xyz);
     outc = vec4(col, 1.0);
 }

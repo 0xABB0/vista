@@ -4,11 +4,14 @@
 layout(location = 0) in vec4 i0;
 layout(location = 1) in vec4 i1;
 
+layout(set = 0, binding = 1) uniform sampler2D dbg_heightmap;
+
 layout(location = 0) out vec2 vUV;
 layout(location = 1) out float vFade;
 layout(location = 2) out float vTint;
 layout(location = 3) out float vDist;
 layout(location = 4) out vec3 vWorld;
+layout(location = 5) out float vDev;
 
 float h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 
@@ -58,5 +61,6 @@ void main()
     vTint = i1.z;
     vDist = dist;
     vWorld = pos;
+    vDev = textureLod(dbg_heightmap, base.xz / TSCALE + 0.5, 0.0).r * THEIGHT - base.y;
     gl_Position = u.viewproj[VIEW] * vec4(pos, 1.0);
 }

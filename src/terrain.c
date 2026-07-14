@@ -1,4 +1,5 @@
 #include "vista.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -6,6 +7,8 @@
 #define STATIC_GRID 64
 #define STATIC_IDX (STATIC_GRID * STATIC_GRID * 6)
 #define LIGHTMAP_N 1024
+#define HORIZON_N 512
+#define HORIZON_STEPS 26
 #define HEIGHTMAP_WARP_AMP 0.42f
 #define HEIGHTMAP_CORE_FRAC 0.10f
 #define HEIGHTMAP_MASK_START 0.88f
@@ -24,140 +27,14 @@ static float g_cmax[TERRAIN_CHUNKS * TERRAIN_CHUNKS];
 static VImg g_hmtex;
 static uint8_t g_lightmap[LIGHTMAP_N * LIGHTMAP_N * 4];
 static VImg g_lmtex;
+static uint8_t g_horizon[2][HORIZON_N * HORIZON_N * 4];
+static VImg g_hztex[2];
 static VkPipeline g_pipe;
+static VkPipeline g_shadow_pipe;
 static VkPipelineLayout g_layout;
 static VBuf g_ib;
 static bool g_tess;
 static VkCore *g_core;
-
-static uint32_t hash2(uint32_t x, uint32_t z, uint32_t seed)
-{
-    uint32_t h = seed + x * 0x9E3779B1u + z * 0x85EBCA77u;
-    h ^= h >> 15; h *= 0x2C1B3C6Du;
-    h ^= h >> 12; h *= 0x297A2D39u;
-    h ^= h >> 15;
-    return h;
-}
-
-static float lattice(int x, int z, uint32_t seed)
-{
-    return (float)(hash2((uint32_t)x, (uint32_t)z, seed) & 0xFFFFFFu) * (1.0f / 16777215.0f);
-}
-
-static float vnoise2(float x, float z, uint32_t seed)
-{
-    float fx = floorf(x), fz = floorf(z);
-    int xi = (int)fx, zi = (int)fz;
-    float tx = x - fx, tz = z - fz;
-    float sx = tx * tx * (3.0f - 2.0f * tx);
-    float sz = tz * tz * (3.0f - 2.0f * tz);
-    float a = lattice(xi, zi, seed);
-    float b = lattice(xi + 1, zi, seed);
-    float c = lattice(xi, zi + 1, seed);
-    float d = lattice(xi + 1, zi + 1, seed);
-    float m0 = a + (b - a) * sx;
-    float m1 = c + (d - c) * sx;
-    return m0 + (m1 - m0) * sz;
-}
-
-static float fbm2(float x, float z, int oct, uint32_t seed)
-{
-    float v = 0.0f, amp = 0.5f, sum = 0.0f;
-    for (int i = 0; i < oct; i++)
-    {
-        v += amp * vnoise2(x, z, seed + (uint32_t)i * 101u);
-        sum += amp;
-        float xr = 0.8f * x - 0.6f * z;
-        float zr = 0.6f * x + 0.8f * z;
-        x = xr * 2.01f + 17.3f;
-        z = zr * 2.01f + 9.2f;
-        amp *= 0.5f;
-    }
-    return v / sum;
-}
-
-static float ridged2(float x, float z, int oct, uint32_t seed)
-{
-    float v = 0.0f, amp = 0.5f, sum = 0.0f;
-    for (int i = 0; i < oct; i++)
-    {
-        float n = vnoise2(x, z, seed + (uint32_t)i * 313u);
-        n = 1.0f - fabsf(2.0f * n - 1.0f);
-        n *= n;
-        v += amp * n;
-        sum += amp;
-        float xr = 0.8f * x - 0.6f * z;
-        float zr = 0.6f * x + 0.8f * z;
-        x = xr * 2.03f + 5.1f;
-        z = zr * 2.03f + 13.7f;
-        amp *= 0.5f;
-    }
-    return v / sum;
-}
-
-static float clamp01(float v)
-{
-    return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
-}
-
-static float smoothstepf(float a, float b, float x)
-{
-    float t = clamp01((x - a) / (b - a));
-    return t * t * (3.0f - 2.0f * t);
-}
-
-static uint32_t canopy_hash(int32_t x, int32_t z, uint32_t seed)
-{
-    uint32_t h = seed + (uint32_t)x * 0x27d4eb2fu + (uint32_t)z * 0x9e3779b9u;
-    h ^= h >> 15; h *= 0x85ebca6bu;
-    h ^= h >> 13; h *= 0xc2b2ae35u;
-    h ^= h >> 16;
-    return h;
-}
-
-static float canopy_lattice(int x, int z, uint32_t seed)
-{
-    return (float)(canopy_hash(x, z, seed) & 0xFFFFFFu) * (1.0f / 16777215.0f);
-}
-
-static float canopy_vnoise(float x, float z, uint32_t seed)
-{
-    float fx = floorf(x), fz = floorf(z);
-    int xi = (int)fx, zi = (int)fz;
-    float tx = x - fx, tz = z - fz;
-    float sx = tx * tx * (3.0f - 2.0f * tx);
-    float sz = tz * tz * (3.0f - 2.0f * tz);
-    float a = canopy_lattice(xi, zi, seed);
-    float b = canopy_lattice(xi + 1, zi, seed);
-    float c = canopy_lattice(xi, zi + 1, seed);
-    float d = canopy_lattice(xi + 1, zi + 1, seed);
-    float m0 = a + (b - a) * sx;
-    float m1 = c + (d - c) * sx;
-    return m0 + (m1 - m0) * sz;
-}
-
-static float canopy_fbm(float x, float z, int oct, uint32_t seed)
-{
-    float v = 0.0f, amp = 0.5f, sum = 0.0f;
-    for (int i = 0; i < oct; i++)
-    {
-        v += amp * canopy_vnoise(x, z, seed + (uint32_t)i * 257u);
-        sum += amp;
-        float xr = x * 2.02f + 3.1f;
-        float zr = z * 2.02f + 7.7f;
-        x = xr; z = zr;
-        amp *= 0.5f;
-    }
-    return v / sum;
-}
-
-static float forest_mask_at(float wx, float wz)
-{
-    float regional = canopy_fbm(wx * 0.0009f, wz * 0.0009f, 2, 0xF0EE5Du);
-    float clumps = canopy_fbm(wx * 0.0035f + 41.0f, wz * 0.0035f + 17.0f, 2, 0x1357Bu);
-    float dens = regional * 0.6f + clumps * 0.4f;
-    return smoothstepf(0.40f, 0.62f, dens);
-}
 
 static float smoothed_height(float x, float z, float r)
 {
@@ -188,19 +65,19 @@ static int gen_heightmap(void)
             float u = (float)i / (float)(TERRAIN_N - 1);
             float x = u * 9.0f, z = v * 9.0f;
 
-            float wx = fbm2(x * 0.22f + 40.0f, z * 0.22f + 11.0f, 4, 5001u) * 2.0f - 1.0f;
-            float wz = fbm2(x * 0.22f + 91.0f, z * 0.22f + 63.0f, 4, 6002u) * 2.0f - 1.0f;
+            float wx = pg_fbm2(x * 0.22f + 40.0f, z * 0.22f + 11.0f, 4, 5001u) * 2.0f - 1.0f;
+            float wz = pg_fbm2(x * 0.22f + 91.0f, z * 0.22f + 63.0f, 4, 6002u) * 2.0f - 1.0f;
             float xw = x + wx * HEIGHTMAP_WARP_AMP;
             float zw = z + wz * HEIGHTMAP_WARP_AMP;
 
-            float base = fbm2(xw, zw, 6, 1337u);
-            float ridgeAmp = 0.12f + (0.85f - 0.12f) * smoothstepf(0.35f, 0.75f, base);
-            float rid = ridged2(xw * 0.55f + 3.7f, zw * 0.55f + 7.1f, 5, 1337u * 3u + 11u);
+            float base = pg_fbm2(xw, zw, 6, 1337u);
+            float ridgeAmp = 0.12f + (0.85f - 0.12f) * pg_smoothstep(0.35f, 0.75f, base);
+            float rid = pg_ridged2(xw * 0.55f + 3.7f, zw * 0.55f + 7.1f, 5, 1337u * 3u + 11u);
             float h = base * 0.5f + rid * ridgeAmp;
 
             float dx = u - 0.5f, dz = v - 0.5f;
             float dist = sqrtf(dx * dx + dz * dz) * 2.0f;
-            float t = smoothstepf(HEIGHTMAP_MASK_START, HEIGHTMAP_MASK_END, dist);
+            float t = pg_smoothstep(HEIGHTMAP_MASK_START, HEIGHTMAP_MASK_END, dist);
             size_t idx = (size_t)j * TERRAIN_N + i;
             masked[idx] = t > 0.001f;
             h *= 1.0f - t;
@@ -244,7 +121,7 @@ static int gen_heightmap(void)
         if (t < thNorm)
         {
             float valleyT = t / thNorm;
-            float shoreSoft = smoothstepf(0.0f, 1.0f, valleyT);
+            float shoreSoft = pg_smoothstep(0.0f, 1.0f, valleyT);
             h = waterNorm * (0.40f + 0.58f * shoreSoft);
         }
         else
@@ -252,7 +129,7 @@ static int gen_heightmap(void)
             float landT = (t - thNorm) / (1.0f - thNorm);
             h = waterNorm + (1.0f - waterNorm) * landT;
         }
-        g_hm[k] = (uint16_t)(clamp01(h) * 65535.0f + 0.5f);
+        g_hm[k] = (uint16_t)(pg_clamp01(h) * 65535.0f + 0.5f);
     }
 
     free(raw);
@@ -391,26 +268,45 @@ VImg *terrain_lightmap_tex(void)
     return &g_lmtex;
 }
 
-static float bake_shadow(v3 p, v3 sun)
+VImg *terrain_horizon_tex(uint32_t i)
 {
-    float shadow = 1.0f;
-    float t = 4.0f;
-    float step = 4.0f;
-    for (int i = 0; i < 48; i++)
+    return &g_hztex[i & 1];
+}
+
+static void bake_horizon(void)
+{
+    double t0 = plat_time();
+    for (int j = 0; j < HORIZON_N; j++)
     {
-        v3 q = v3add(p, v3scale(sun, t));
-        float r = t * 0.035f;
-        float gh = smoothed_height(q.x, q.z, r);
-        float clearance = q.y - gh - 1.0f;
-        float w = 0.006f * t + 0.45f;
-        if (w > 15.0f) w = 15.0f;
-        float pen = smoothstepf(-w, w, clearance);
-        if (pen < shadow) shadow = pen;
-        if (shadow <= 0.015f) break;
-        t += step;
-        step *= 1.10f;
+        float v = ((float)j + 0.5f) / (float)HORIZON_N;
+        float z = (v - 0.5f) * TERRAIN_SCALE;
+        for (int i = 0; i < HORIZON_N; i++)
+        {
+            float u = ((float)i + 0.5f) / (float)HORIZON_N;
+            float x = (u - 0.5f) * TERRAIN_SCALE;
+            float h0 = terrain_height_at(x, z) + 1.0f;
+            for (int a = 0; a < 8; a++)
+            {
+                float ang = (float)a * (6.28318530718f / 8.0f);
+                float dx = cosf(ang), dz = sinf(ang);
+                float maxAng = 0.0f;
+                float t = 6.0f;
+                float step = 6.0f;
+                for (int s = 0; s < HORIZON_STEPS; s++)
+                {
+                    float gh = smoothed_height(x + dx * t, z + dz * t, t * 0.02f);
+                    float ha = atan2f(gh - h0, t);
+                    if (ha > maxAng) maxAng = ha;
+                    t += step;
+                    step *= 1.18f;
+                }
+                uint8_t enc = (uint8_t)(pg_clamp01(maxAng * (2.0f / 3.14159265f)) * 255.0f + 0.5f);
+                g_horizon[a >> 2][(size_t)(j * HORIZON_N + i) * 4 + (a & 3)] = enc;
+            }
+        }
     }
-    return clamp01(shadow);
+    double dt = plat_time() - t0;
+    plat_log("terrain: horizon bake took %.3fs", dt);
 }
 
 static float bake_ao(v3 p)
@@ -432,9 +328,9 @@ static float bake_ao(v3 p)
             t += step;
             step *= 1.25f;
         }
-        sum += 1.0f - clamp01(maxSlope * 1.5f);
+        sum += 1.0f - pg_clamp01(maxSlope * 1.5f);
     }
-    return clamp01(sum / 8.0f);
+    return pg_clamp01(sum / 8.0f);
 }
 
 static bool forest_eligible(float h)
@@ -448,9 +344,6 @@ static bool forest_eligible(float h)
 static void bake_lightmap(void)
 {
     double t0 = plat_time();
-    v3 sun = v3norm((v3){ 0.45f, 0.30f, 0.55f });
-    v3 sunxz = v3norm((v3){ sun.x, 0.0f, sun.z });
-    const float canopyReach = 17.0f;
     for (int j = 0; j < LIGHTMAP_N; j++)
     {
         float v = ((float)j + 0.5f) / (float)LIGHTMAP_N;
@@ -461,21 +354,14 @@ static void bake_lightmap(void)
             float x = (u - 0.5f) * TERRAIN_SCALE;
             float h = terrain_height_at(x, z);
             v3 p = { x, h + 0.5f, z };
-            float shadow = bake_shadow(p, sun);
             float ao = bake_ao(p);
 
-            float sx = x + sunxz.x * canopyReach;
-            float sz = z + sunxz.z * canopyReach;
-            float sh = terrain_height_at(sx, sz);
-            float canopySrc = forest_eligible(sh) ? forest_mask_at(sx, sz) : 0.0f;
-            shadow *= 1.0f - 0.72f * canopySrc;
-
-            float canopyHere = forest_eligible(h) ? forest_mask_at(x, z) : 0.0f;
+            float canopyHere = forest_eligible(h) ? pg_forest_mask(x, z) : 0.0f;
             ao *= 1.0f - 0.28f * canopyHere;
 
             uint8_t *px = g_lightmap + (size_t)(j * LIGHTMAP_N + i) * 4;
-            px[0] = (uint8_t)(clamp01(shadow) * 255.0f + 0.5f);
-            px[1] = (uint8_t)(clamp01(ao) * 255.0f + 0.5f);
+            px[0] = 255;
+            px[1] = (uint8_t)(pg_clamp01(ao) * 255.0f + 0.5f);
             px[2] = (uint8_t)(canopyHere * 255.0f + 0.5f);
             px[3] = 255;
         }
@@ -638,6 +524,17 @@ int terrain_init(VkCore *c, VkRenderPass rp, bool multiview, const Scene *scene)
         return -1;
     compute_chunk_bounds();
     build_height_blur();
+    const char *hmdump = getenv("VISTA_DUMP_HM");
+    if (hmdump)
+    {
+        FILE *df = fopen(hmdump, "wb");
+        if (df)
+        {
+            fwrite(g_hm, sizeof g_hm, 1, df);
+            fwrite(g_hm_blur, sizeof g_hm_blur, 1, df);
+            fclose(df);
+        }
+    }
     if (vkc_texture_r16(c, g_hm, TERRAIN_N, TERRAIN_N, &g_hmtex) != 0)
     {
         plat_log("terrain: heightmap upload failed");
@@ -649,42 +546,84 @@ int terrain_init(VkCore *c, VkRenderPass rp, bool multiview, const Scene *scene)
         plat_log("terrain: lightmap upload failed");
         return -1;
     }
-    if (!g_tess)
+    bake_horizon();
+    for (uint32_t hi = 0; hi < 2; hi++)
     {
-        if (vkc_buffer(c, STATIC_IDX * sizeof(uint16_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                       &g_ib) != 0)
+        if (vkc_texture_rgba(c, g_horizon[hi], HORIZON_N, HORIZON_N, false, false, &g_hztex[hi]) != 0)
         {
-            plat_log("terrain: index buffer creation failed");
+            plat_log("terrain: horizon upload failed");
             return -1;
         }
-        void *map = g_ib.map;
-        if (!map)
+    }
+    if (vkc_buffer(c, STATIC_IDX * sizeof(uint16_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                   &g_ib) != 0)
+    {
+        plat_log("terrain: index buffer creation failed");
+        return -1;
+    }
+    void *map = g_ib.map;
+    if (!map)
+    {
+        VkResult mr = vkMapMemory(c->device, g_ib.mem, 0, VK_WHOLE_SIZE, 0, &map);
+        if (mr != VK_SUCCESS)
         {
-            VkResult mr = vkMapMemory(c->device, g_ib.mem, 0, VK_WHOLE_SIZE, 0, &map);
-            if (mr != VK_SUCCESS)
-            {
-                plat_log("terrain: index buffer map failed (%d)", (int)mr);
-                return -1;
-            }
+            plat_log("terrain: index buffer map failed (%d)", (int)mr);
+            return -1;
         }
-        uint16_t *idx = (uint16_t *)map;
-        uint32_t k = 0;
-        for (int z = 0; z < STATIC_GRID; z++)
+    }
+    uint16_t *idx = (uint16_t *)map;
+    uint32_t k = 0;
+    for (int z = 0; z < STATIC_GRID; z++)
+    {
+        for (int x = 0; x < STATIC_GRID; x++)
         {
-            for (int x = 0; x < STATIC_GRID; x++)
-            {
-                uint16_t i0 = (uint16_t)(z * (STATIC_GRID + 1) + x);
-                uint16_t i1 = (uint16_t)(i0 + 1);
-                uint16_t i2 = (uint16_t)(i0 + STATIC_GRID + 1);
-                uint16_t i3 = (uint16_t)(i2 + 1);
-                idx[k++] = i0; idx[k++] = i2; idx[k++] = i1;
-                idx[k++] = i1; idx[k++] = i2; idx[k++] = i3;
-            }
+            uint16_t i0 = (uint16_t)(z * (STATIC_GRID + 1) + x);
+            uint16_t i1 = (uint16_t)(i0 + 1);
+            uint16_t i2 = (uint16_t)(i0 + STATIC_GRID + 1);
+            uint16_t i3 = (uint16_t)(i2 + 1);
+            idx[k++] = i0; idx[k++] = i2; idx[k++] = i1;
+            idx[k++] = i1; idx[k++] = i2; idx[k++] = i3;
         }
-        if (!g_ib.map) vkUnmapMemory(c->device, g_ib.mem);
+    }
+    if (!g_ib.map) vkUnmapMemory(c->device, g_ib.mem);
+    if (vkc_pipe_depth(c, render_shadow_rp(), g_layout, "shaders/shadow_terrain.vert.spv",
+                       NULL, 0, NULL, 0, &g_shadow_pipe))
+    {
+        plat_log("terrain: shadow pipeline creation failed");
+        return -1;
     }
     return create_pipeline(c, rp, multiview);
+}
+
+void terrain_record_shadow(VkCommandBuffer cmd, const FrameUBO *ubo, uint32_t cascade)
+{
+    if (g_shadow_pipe == VK_NULL_HANDLE) return;
+    Plane pl[6];
+    planes_from(&ubo->cascade_vp[cascade], pl);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_shadow_pipe);
+    vkCmdBindIndexBuffer(cmd, g_ib.buf, 0, VK_INDEX_TYPE_UINT16);
+    ShadowPC pc;
+    pc.vp = ubo->cascade_vp[cascade];
+    float cs = TERRAIN_SCALE / (float)TERRAIN_CHUNKS;
+    for (int cz = 0; cz < TERRAIN_CHUNKS; cz++)
+    {
+        for (int cx = 0; cx < TERRAIN_CHUNKS; cx++)
+        {
+            int ci = cz * TERRAIN_CHUNKS + cx;
+            float x0 = -TERRAIN_SCALE * 0.5f + (float)cx * cs;
+            float z0 = -TERRAIN_SCALE * 0.5f + (float)cz * cs;
+            v3 mn = { x0, g_cmin[ci], z0 };
+            v3 mx = { x0 + cs, g_cmax[ci], z0 + cs };
+            if (!aabb_visible(pl, mn, mx)) continue;
+            pc.chunk[0] = x0;
+            pc.chunk[1] = z0;
+            pc.chunk[2] = cs;
+            pc.chunk[3] = 0.0f;
+            vkCmdPushConstants(cmd, g_layout, TERRAIN_PC_STAGES, 0, sizeof pc, &pc);
+            vkCmdDrawIndexed(cmd, STATIC_IDX, 1, 0, 0, 0);
+        }
+    }
 }
 
 void terrain_record(VkCommandBuffer cmd, uint32_t slot, const FrameUBO *ubo)
@@ -727,8 +666,15 @@ void terrain_destroy(void)
         vkDestroyPipeline(g_core->device, g_pipe, NULL);
         g_pipe = VK_NULL_HANDLE;
     }
+    if (g_shadow_pipe != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(g_core->device, g_shadow_pipe, NULL);
+        g_shadow_pipe = VK_NULL_HANDLE;
+    }
     if (g_ib.buf != VK_NULL_HANDLE) vkc_buffer_destroy(g_core, &g_ib);
     if (g_hmtex.img != VK_NULL_HANDLE) vkc_image_destroy(g_core, &g_hmtex);
     if (g_lmtex.img != VK_NULL_HANDLE) vkc_image_destroy(g_core, &g_lmtex);
+    for (uint32_t hi = 0; hi < 2; hi++)
+        if (g_hztex[hi].img != VK_NULL_HANDLE) vkc_image_destroy(g_core, &g_hztex[hi]);
     g_core = NULL;
 }

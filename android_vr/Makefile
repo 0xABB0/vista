@@ -5,7 +5,7 @@ ANDROIDVERSION=29
 ANDROIDTARGET=32
 ADB?=adb
 
-SRC=../src/vkcore.c ../src/render.c ../src/atmos.c ../src/scene.c ../src/terrain.c ../src/sky.c ../src/veg.c ../src/water.c ../src/game.c ../src/math.c ../src/assets_io.c ../src/plat_android.c ../src/xr.c ../vendor/volk.c ../vendor/android_native_app_glue.c
+SRC=../src/vkcore.c ../src/render.c ../src/atmos.c ../src/scene.c ../src/terrain.c ../src/procgen.c ../src/sky.c ../src/veg.c ../src/water.c ../src/game.c ../src/math.c ../src/assets_io.c ../src/plat_android.c ../src/xr.c ../vendor/volk.c ../vendor/android_native_app_glue.c
 
 CFLAGS?=-ffunction-sections -fdata-sections -Os -std=c11 -Wall -fvisibility=hidden
 CFLAGS+=-DANDROID -DANDROIDVERSION=$(ANDROIDVERSION) -DVISTA_VR -DVK_USE_PLATFORM_ANDROID_KHR -DAPPNAME=\"$(APPNAME)\" -I../src -I../vendor -fPIC
@@ -33,7 +33,10 @@ STOREPASS?=password
 KEYSTOREFILE=../vista.keystore
 ALIASNAME?=standkey
 
+SPV=$(wildcard ../build/shaders/*.spv)
+
 all : $(APKFILE)
+	@echo "android_vr ok: $(APKFILE)"
 
 keystore : $(KEYSTOREFILE)
 
@@ -44,7 +47,7 @@ makecapk/lib/arm64-v8a/lib$(APPNAME).so : $(SRC) ../src/vista.h
 	mkdir -p makecapk/lib/arm64-v8a
 	$(CC_ARM64) $(CFLAGS) -m64 -o $@ $(SRC) -L$(NDK)/toolchains/llvm/prebuilt/$(OS_NAME)/sysroot/usr/lib/aarch64-linux-android/$(ANDROIDVERSION) $(LDFLAGS)
 
-$(APKFILE) : makecapk/lib/arm64-v8a/lib$(APPNAME).so AndroidManifest.xml $(KEYSTOREFILE)
+$(APKFILE) : makecapk/lib/arm64-v8a/lib$(APPNAME).so AndroidManifest.xml $(KEYSTOREFILE) $(SPV)
 	mkdir -p makecapk/assets/shaders
 	cp -r ../build/shaders/* makecapk/assets/shaders/
 	cp -rL ../assets/tex makecapk/assets/

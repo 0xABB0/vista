@@ -5,18 +5,18 @@ GLSLC?=glslc
 VULKAN_SDK?=C:/VulkanSDK/1.4.321.1
 BUILD?=build
 
-CORESRC=src/vkcore.c src/render.c src/atmos.c src/scene.c src/terrain.c src/sky.c src/veg.c src/water.c src/game.c src/math.c src/assets_io.c vendor/volk.c
+CORESRC=src/vkcore.c src/render.c src/atmos.c src/scene.c src/terrain.c src/procgen.c src/sky.c src/veg.c src/water.c src/game.c src/math.c src/assets_io.c vendor/volk.c
 WINSRC=$(CORESRC) src/plat_win.c
 CFLAGS=-O2 -std=c11 -Isrc -Ivendor -I$(VULKAN_SDK)/Include -D_CRT_SECURE_NO_WARNINGS -DVK_USE_PLATFORM_WIN32_KHR -Wall -Wno-unused-function
 WINLIBS=-luser32 -lgdi32 -lshell32
 MACSRC=$(CORESRC) src/plat_macos.c
 MAC_CFLAGS=-O2 -std=c11 -Isrc -Ivendor -I/usr/local/include -Wall -Wno-unused-function
 
-SHADERS=terrain.vert terrain.tesc terrain.tese terrain.frag terrain_static.vert sky.vert sky.frag grass.vert grass.frag rock.vert rock.frag water.vert water.frag tree.vert tree.frag fullscreen.vert post_final.frag lut_transmittance.frag lut_multiscatter.frag lut_skyview.frag
+SHADERS=terrain.vert terrain.tesc terrain.tese terrain.frag terrain_static.vert sky.vert sky.frag grass.vert grass.frag rock.vert rock.frag water.vert water.frag tree.vert tree.frag shadow_terrain.vert shadow_tree.vert shadow_rock.vert fullscreen.vert post_final.frag bloom_down.frag bloom_up.frag lut_transmittance.frag lut_multiscatter.frag lut_skyview.frag
 SPV=$(patsubst %,$(BUILD)/shaders/%.spv,$(SHADERS)) $(patsubst %,$(BUILD)/shaders/%.mv.spv,$(SHADERS))
 SHADER_INC=$(wildcard shaders/inc/*.glsl)
 
-ASSET_IDS=Grass004 Rock035 Ground048
+ASSET_IDS=Grass004 Rock035 Ground048 Snow010A
 
 .PHONY : all windows windows_vr macos android android_vr shaders assets run run_vr run_macos push push_vr clean
 
@@ -45,12 +45,14 @@ assets :
 	done
 
 windows : shaders $(BUILD)/vista.exe
+	@echo "windows ok: $(BUILD)/vista.exe"
 
 $(BUILD)/vista.exe : $(WINSRC) src/vista.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $(WINSRC) $(WINLIBS)
 
 macos : shaders $(BUILD)/vista
+	@echo "macos ok: $(BUILD)/vista"
 
 $(BUILD)/vista : $(MACSRC) src/vista.h
 	@mkdir -p $(BUILD)
@@ -60,6 +62,7 @@ run_macos : macos assets
 	cd $(BUILD) && VISTA_SMOKE=1 ./vista
 
 windows_vr : shaders $(BUILD)/vista_vr.exe
+	@echo "windows_vr ok: $(BUILD)/vista_vr.exe"
 
 $(BUILD)/vista_vr.exe : $(WINSRC) src/xr.c src/vista.h
 	@mkdir -p $(BUILD)

@@ -2,6 +2,7 @@
 #include "inc/common.glsl"
 #define ATM_SCENE_SAMPLERS
 #include "inc/atmosphere.glsl"
+#include "inc/shadow.glsl"
 
 layout(set = 0, binding = 2) uniform sampler2D lightmap;
 
@@ -10,6 +11,7 @@ layout(location = 1) in float vFade;
 layout(location = 2) in float vTint;
 layout(location = 3) in float vDist;
 layout(location = 4) in vec3 vWorld;
+layout(location = 5) in float vDev;
 
 layout(location = 0) out vec4 outc;
 
@@ -46,9 +48,7 @@ void main()
     float f = fract(sx) - 0.5;
     float sh = 0.45 + 0.55 * h11(id);
     float wdt = 0.42 * max(1.0 - vUV.y / sh, 0.0);
-    float a = (vUV.y < sh && abs(f) < wdt) ? 1.0 : 0.0;
-    a *= vFade;
-    if (a <= 0.0) discard;
+    float a = 1.0;
     vec3 dry = vec3(0.32, 0.27, 0.09);
     vec3 lush = vec3(0.05, 0.14, 0.03);
     vec3 hi = vec3(0.24, 0.42, 0.10);
@@ -58,12 +58,12 @@ void main()
     float macro = macro_fbm(vWorld.xz * 0.0025 + 19.0);
     albedo *= mix(vec3(0.82, 0.72, 0.42), vec3(0.95, 1.0, 0.90), macro);
     vec2 lmuv = vWorld.xz / TSCALE + 0.5;
-    vec2 lm = texture(lightmap, lmuv).rg;
-    float shadow = lm.r;
-    float ao = lm.g;
+    float shadow = sun_visibility(vWorld, vec3(0.0, 1.0, 0.0));
+    float ao = texture(lightmap, lmuv).g;
     vec3 sunCol = u.sun_radiance.rgb;
     vec3 ambCol = mix(u.ambient_horizon.rgb, u.ambient_zenith.rgb, 0.6) * ATM_PI;
-    vec3 col = albedo * (sunCol * shadow * (0.25 + 0.55 * vUV.y) + ambCol * (0.35 + 0.65 * ao));
+    vec3 col = albedo * (sunCol * shadow * (0.25 + 0.55 * vUV.y) +
+                         ambCol * (0.35 + 0.65 * ao) * (0.55 + 0.45 * shadow));
     col = aerial(col, vWorld, u.campos.xyz, u.sundir.xyz);
-    outc = vec4(col, a);
+    outc = vec4(clamp(vDev * 2.0, 0.0, 1.0), clamp(-vDev * 2.0, 0.0, 1.0), 0.2, 1.0);
 }

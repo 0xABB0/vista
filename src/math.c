@@ -57,6 +57,19 @@ m4 m4frustum_xr(float angleLeft, float angleRight, float angleUp, float angleDow
     return r;
 }
 
+m4 m4ortho(float l, float r, float b, float t, float n, float f)
+{
+    m4 o = {{0}};
+    o.m[0] = 2.0f / (r - l);
+    o.m[5] = -2.0f / (t - b);
+    o.m[10] = -1.0f / (f - n);
+    o.m[12] = -(r + l) / (r - l);
+    o.m[13] = (t + b) / (t - b);
+    o.m[14] = -n / (f - n);
+    o.m[15] = 1.0f;
+    return o;
+}
+
 m4 m4look(v3 eye, v3 center, v3 up)
 {
     v3 f = v3norm(v3sub(center, eye));

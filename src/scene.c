@@ -69,13 +69,28 @@ static int scene_write_sets(VkCore *c)
         plat_log("scene: lightmap texture missing");
         return -1;
     }
-    VkDescriptorImageInfo imgs[2] = {
+    VImg *hz0 = terrain_horizon_tex(0);
+    VImg *hz1 = terrain_horizon_tex(1);
+    if (!hz0->view || !hz1->view) {
+        plat_log("scene: horizon textures missing");
+        return -1;
+    }
+    VkImageView smview = render_shadowmap_view();
+    if (!smview) {
+        plat_log("scene: shadow map view missing");
+        return -1;
+    }
+    VkDescriptorImageInfo imgs[5] = {
         { c->sampler_clamp, hm->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
         { c->sampler_clamp, lm->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+        { c->sampler_clamp, hz0->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+        { c->sampler_clamp, hz1->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+        { c->sampler_shadow, smview, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
     };
+    uint32_t bindings[5] = { 1, 2, 6, 7, 8 };
     for (uint32_t s = 0; s < VISTA_FRAMES; s++) {
         VkDescriptorBufferInfo bi = { g_scene.ubo[s].buf, 0, sizeof(FrameUBO) };
-        VkWriteDescriptorSet ws[3];
+        VkWriteDescriptorSet ws[6];
         memset(ws, 0, sizeof ws);
         ws[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         ws[0].dstSet = g_scene.set0[s];
@@ -83,30 +98,32 @@ static int scene_write_sets(VkCore *c)
         ws[0].descriptorCount = 1;
         ws[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         ws[0].pBufferInfo = &bi;
-        for (uint32_t j = 0; j < 2; j++) {
+        for (uint32_t j = 0; j < 5; j++) {
             ws[j + 1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             ws[j + 1].dstSet = g_scene.set0[s];
-            ws[j + 1].dstBinding = j + 1;
+            ws[j + 1].dstBinding = bindings[j];
             ws[j + 1].descriptorCount = 1;
             ws[j + 1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             ws[j + 1].pImageInfo = &imgs[j];
         }
-        vkUpdateDescriptorSets(c->device, 3, ws, 0, 0);
+        vkUpdateDescriptorSets(c->device, 6, ws, 0, 0);
     }
-    VkDescriptorImageInfo mats[6] = {
+    VkDescriptorImageInfo mats[8] = {
         { c->sampler_repeat, g_tex.grass_color.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
         { c->sampler_repeat, g_tex.grass_normal.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
         { c->sampler_repeat, g_tex.rock_color.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
         { c->sampler_repeat, g_tex.rock_normal.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
         { c->sampler_repeat, g_tex.dirt_color.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
         { c->sampler_repeat, g_tex.dirt_normal.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+        { c->sampler_repeat, g_tex.snow_color.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+        { c->sampler_repeat, g_tex.snow_normal.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
     };
-    for (uint32_t i = 0; i < 6; i++)
+    for (uint32_t i = 0; i < 8; i++)
         if (!mats[i].imageView) {
             plat_log("scene: material texture %u missing", i);
             return -1;
         }
-    return scene_alloc_texset(c, mats, 6, &g_scene.material_set);
+    return scene_alloc_texset(c, mats, 8, &g_scene.material_set);
 }
 
 int scene_init(VkCore *c, VkRenderPass rp, bool multiview)
@@ -114,13 +131,13 @@ int scene_init(VkCore *c, VkRenderPass rp, bool multiview)
     memset(&g_scene, 0, sizeof g_scene);
     g_scene.core = c;
     g_scene.multiview = multiview;
-    VkDescriptorSetLayoutBinding b[6];
+    VkDescriptorSetLayoutBinding b[9];
     b[0] = (VkDescriptorSetLayoutBinding){ 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL_GRAPHICS, 0 };
-    for (uint32_t i = 1; i < 6; i++)
+    for (uint32_t i = 1; i < 9; i++)
         b[i] = (VkDescriptorSetLayoutBinding){ i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL_GRAPHICS, 0 };
     VkDescriptorSetLayoutCreateInfo li = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .bindingCount = 6,
+        .bindingCount = 9,
         .pBindings = b,
     };
     SCHK(vkCreateDescriptorSetLayout(c->device, &li, 0, &g_scene.set0_layout));
@@ -189,6 +206,20 @@ void scene_record_terrain(VkCommandBuffer cmd, uint32_t slot, uint32_t w, uint32
     if (slot >= VISTA_FRAMES) return;
     scene_bind(cmd, slot, w, h);
     terrain_record(cmd, slot, (const FrameUBO *)g_scene.ubo[slot].map);
+}
+
+void scene_record_shadow(VkCommandBuffer cmd, uint32_t slot, uint32_t cascade, uint32_t res)
+{
+    if (slot >= VISTA_FRAMES || !g_scene.ubo[slot].map) return;
+    VkViewport vp = { 0.0f, 0.0f, (float)res, (float)res, 0.0f, 1.0f };
+    VkRect2D sc = { { 0, 0 }, { res, res } };
+    vkCmdSetViewport(cmd, 0, 1, &vp);
+    vkCmdSetScissor(cmd, 0, 1, &sc);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_scene.pipe_layout,
+                            0, 1, &g_scene.set0[slot], 0, 0);
+    const FrameUBO *ubo = (const FrameUBO *)g_scene.ubo[slot].map;
+    terrain_record_shadow(cmd, ubo, cascade);
+    veg_record_shadow(cmd, slot, ubo, cascade);
 }
 
 void scene_record_rest(VkCommandBuffer cmd, uint32_t slot, uint32_t w, uint32_t h)
